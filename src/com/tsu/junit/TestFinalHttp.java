@@ -103,8 +103,11 @@ public class TestFinalHttp extends AndroidTestCase{
 	}
 
 	
-	//此时我发现FinalHttp都是异步操作，我现在没法对其进行单元测试，因为获取不到结果啊,我随便写个方法
 	
+	/**
+	 * 此时我发现FinalHttp都是异步操作，我现在没法对其进行单元测试，因为获取不到结果啊,我随便写个方法
+	 * 看看get方法：
+	 */
 	public void testGet(){
 		finalHttp.get(URL,new AjaxCallBack<String>(){
 
