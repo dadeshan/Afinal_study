@@ -1,7 +1,10 @@
 package com.tsu.junit;
 
+import org.apache.http.client.methods.HttpGet;
+
 import net.tsz.afinal.FinalHttp;
 import net.tsz.afinal.http.AjaxCallBack;
+import net.tsz.afinal.http.AjaxParams;
 import android.test.AndroidTestCase;
 
 /**
@@ -107,6 +110,13 @@ public class TestFinalHttp extends AndroidTestCase{
 	/**
 	 * 此时我发现FinalHttp都是异步操作，我现在没法对其进行单元测试，因为获取不到结果啊,我随便写个方法
 	 * 看看get方法：
+	 * 他调用了这个方法：
+	 *  public void get( String url, AjaxParams params, AjaxCallBack<? extends Object> callBack) {
+     *  	sendRequest(httpClient, httpContext, new HttpGet(getUrlWithQueryString(url, params)), null, callBack);
+     *	}
+     *	httpContext ：封装了http请求的信息
+     *  将传入的 url 组装成一个 HttpGet作为参数传递给sendRequest
+     *  AjaxCallBack：异步接口
 	 */
 	public void testGet(){
 		finalHttp.get(URL,new AjaxCallBack<String>(){
