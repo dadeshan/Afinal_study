@@ -1,7 +1,15 @@
 package com.tsu.junit;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+
+import org.apache.http.HttpEntity;
+
 import net.tsz.afinal.FinalHttp;
 import net.tsz.afinal.http.AjaxCallBack;
+import net.tsz.afinal.http.entityhandler.EntityCallBack;
+import android.os.SystemClock;
 import android.test.AndroidTestCase;
 
 /**
@@ -246,13 +254,62 @@ public class TestFinalHttp extends AndroidTestCase{
 			
 		}
 	}
-		so,onProgressUpdate 看看，就这一句对我们有用：
+		so,onProgressUpdate 看看，就这一句对我们有用：成功之后调用我们传入的callback。失败也是同理哦
 		case UPDATE_SUCCESS:
 			if(callback!=null)
 				callback.onSuccess((T)values[1]);
 			break;
+		那么，小伙伴们可就纳闷了，onLoading呢，wait，向上一步：
+		responseBody = mStrEntityHandler.handleEntity(entity,this,charset);
+		得到一个response，在这个里面处理，所以这个方法执行的时候就是onLoading哦。肯定有一个while的输入流。来看看：
+	public class StringEntityHandler {
+
+	public Object handleEntity(HttpEntity entity, EntityCallBack callback,String charset)throws IOException {
+		if (entity == null)
+			return null;
+		
+		ByteArrayOutputStream outStream = new ByteArrayOutputStream();
+		byte[] buffer = new byte[1024];
+		
+		long count = entity.getContentLength();
+		long curCount = 0;
+		int len = -1;
+		InputStream is = entity.getContent();
+		while ((len = is.read(buffer)) != -1) {
+			outStream.write(buffer, 0, len);
+			curCount += len;
+			if(callback!=null)
+				// 哈哈，在这里吧，再看看
+				callback.callBack(count, curCount,false);
+		}
+		if(callback!=null)
+			callback.callBack(count, curCount,true);
+		byte[] data = outStream.toByteArray();
+		outStream.close();
+		is.close();
+		return new String(data,charset);
+		}
+
+	}
+		在callBack方法中肯定就publishProgress(UPDATE_LOADING,count,current);来看看：
+	private long time;
+	@Override
+	public void callBack(long count, long current,boolean mustNoticeUI) {
+		if(callback!=null && callback.isProgress()){
+			if(mustNoticeUI){
+				publishProgress(UPDATE_LOADING,count,current);
+			}else{
+				long thisTime = SystemClock.uptimeMillis();
+				if(thisTime - time >= callback.getRate()){
+					time = thisTime ;
+					publishProgress(UPDATE_LOADING,count,current);
+				}
+			}
+		}
+	}
 	 */
 	
+	//小伙伴们下面就是一个FinalHttp请求哦。你们通晓了吗？我们自己来模仿一个类似的Http请求吧。
 	
 	public void testGet(){
 		finalHttp.get(URL,new AjaxCallBack<String>(){
