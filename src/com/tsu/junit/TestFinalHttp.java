@@ -1,10 +1,7 @@
 package com.tsu.junit;
 
-import org.apache.http.client.methods.HttpGet;
-
 import net.tsz.afinal.FinalHttp;
 import net.tsz.afinal.http.AjaxCallBack;
-import net.tsz.afinal.http.AjaxParams;
 import android.test.AndroidTestCase;
 
 /**
@@ -117,7 +114,146 @@ public class TestFinalHttp extends AndroidTestCase{
      *	httpContext ：封装了http请求的信息
      *  将传入的 url 组装成一个 HttpGet作为参数传递给sendRequest
      *  AjaxCallBack：异步接口
+     *  
+     *  看看 sendRequest 方法：
+     *  
+     *   protected <T> void sendRequest(DefaultHttpClient client, HttpContext httpContext, HttpUriRequest uriRequest, String contentType, AjaxCallBack<T> ajaxCallBack) {
+     *  	if(contentType != null) {
+     *      	uriRequest.addHeader("Content-Type", contentType);
+     *   	}
+     *    	new HttpHandler<T>(client, httpContext, ajaxCallBack,charset).executeOnExecutor(executor, uriRequest);
+     *  }
+     *  很显然我们的 contentType == null。说明一下：
+     *   HttpHandler  <T> extends  AsyncTask<Object, Object, Object> implements EntityCallBack
+     *   可以看到 HttpHandler继承了 AsyncTask (作者修改了一些代码，以后再说)，所以这就是 运行在一个线程池中的 任务。EntityCallBack是作者自定义的接口。
+     *   不得不说，小伙伴们，真正的面纱就要被揭开了。
+     *   
+     *   public interface EntityCallBack {
+     *		public void callBack(long count,long current,boolean mustNoticeUI);
+	 *	 }
+	 *
+	 *	 HttpHandler 既然是继承的 AsyncTask，那么任务必定在以下的方法中顺序处理：
+	 *		1. onPreExecute()
+	 *		2. doInBackground(Params...)
+	 *		3. onProgressUpdate(Progress...)
+	 *		4. onPostExecute(Result)
+	 *
+	 *		@Override
+	 *	protected Object doInBackground(Object... params) {
+	 *		if(params!=null && params.length == 3){
+	 *		targetUrl = String.valueOf(params[1]);
+	 *		isResume = (Boolean) params[2];
+	 *		}
+	 *		try {
+	 *			//表示 开始更新 UI
+	 *			publishProgress(UPDATE_START); // 开始
+	 *			makeRequestWithRetries((HttpUriRequest)params[0]);
+	 *
+	 *
+	 * 		} catch (IOException e) {
+	 *			publishProgress(UPDATE_FAILURE,e,0,e.getMessage()); // 结束
+	 *		}
+     *
+	 *		return null;
+	 *	}
+	 *	new HttpHandler<T>(client, httpContext, ajaxCallBack,charset).executeOnExecutor(executor, uriRequest);
+	 * 	很显然，我们执行的时候只传入了uriRequest。so,length==1
+	 * 	private void makeRequestWithRetries(HttpUriRequest request) throws IOException {
+	 * 	
+	 * 	//和上面length一样，可以看出这和afinal的download 有关，和我们本次get无关
+		if(isResume && targetUrl!= null){
+			File downloadFile = new File(targetUrl);
+			long fileLen = 0;
+			if(downloadFile.isFile() && downloadFile.exists()){
+				fileLen = downloadFile.length();
+			}
+			if(fileLen > 0)
+				request.setHeader("RANGE", "bytes="+fileLen+"-");
+		}
+		
+		boolean retry = true;
+		IOException cause = null;
+		HttpRequestRetryHandler retryHandler = client.getHttpRequestRetryHandler();
+		while (retry) {
+			try {
+				if (!isCancelled()) {
+					
+					// 大家看到，在此处调用了你的client
+					HttpResponse response = client.execute(request, context);
+					if (!isCancelled()) {
+						handleResponse(response);
+					} 
+				}
+				//结束、返回
+				return;
+			} catch (UnknownHostException e) {
+				publishProgress(UPDATE_FAILURE,e,0,"unknownHostException：can't resolve host");
+				return;
+			} catch (IOException e) {
+				cause = e;
+				retry = retryHandler.retryRequest(cause, ++executionCount,context);
+			} catch (NullPointerException e) {
+				// HttpClient 4.0.x 之前的一个bug
+				// http://code.google.com/p/android/issues/detail?id=5255
+				cause = new IOException("NPE in HttpClient" + e.getMessage());
+				retry = retryHandler.retryRequest(cause, ++executionCount,context);
+			}catch (Exception e) {
+				cause = new IOException("Exception" + e.getMessage());
+				retry = retryHandler.retryRequest(cause, ++executionCount,context);
+			}
+		}
+		if(cause!=null)
+			throw cause;
+		else
+			throw new IOException("未知网络错误");
+	}
+	
+		接着来看看 handleResponse 是如何处理结果的：
+		private void handleResponse(HttpResponse response) {
+		StatusLine status = response.getStatusLine();
+		
+		//很明显这也是处理download，与get无关，略过
+		if (status.getStatusCode() >= 300) {
+			String errorMsg = "response status error code:"+status.getStatusCode();
+			if(status.getStatusCode() == 416 && isResume){
+				errorMsg += " \n maybe you have download complete.";
+			}
+			publishProgress(UPDATE_FAILURE,new HttpResponseException(status.getStatusCode(), status.getReasonPhrase()),status.getStatusCode() ,errorMsg);
+		}
+		//我们的在这里
+		else {
+			try {
+				HttpEntity entity = response.getEntity();
+				Object responseBody = null;
+				if (entity != null) {
+					time = SystemClock.uptimeMillis();
+					if(targetUrl!=null){
+						responseBody = mFileEntityHandler.handleEntity(entity,this,targetUrl,isResume);
+					}
+					else{
+						
+						// 在这里，就是把返回结果包装了一下，mStrEntityHandler 可以看到是对String进行包装，这就是afina介绍的支持 xml、json、jsonArray等
+						responseBody = mStrEntityHandler.handleEntity(entity,this,charset);
+					}
+						
+				}
+				// 发送给 ui 线程，直接引起 onProgressUpdate的执行
+				publishProgress(UPDATE_SUCCESS,responseBody);
+				
+			} catch (IOException e) {
+				publishProgress(UPDATE_FAILURE,e,0,e.getMessage());
+			}
+			
+		}
+	}
+		so,onProgressUpdate 看看，就这一句对我们有用：
+		case UPDATE_SUCCESS:
+			if(callback!=null)
+				callback.onSuccess((T)values[1]);
+			break;
 	 */
+	
+	
 	public void testGet(){
 		finalHttp.get(URL,new AjaxCallBack<String>(){
 
